@@ -9,7 +9,17 @@ local reportthreshold = 80
 local playername,_ = UnitName('player')
 local hsManaLib = nil
 local hsManaLibChecked = false
-local hsManaLibWarningPrinted = false
+local hsManaLibFallbackNotice = false
+local hsSpellKnownCache = {}
+local hsSpellIndexCache = {}
+local hsReshiftChecked = false
+local hsHasReshift = false
+local hsLastShiftAttempt = 0
+local HS_SHRED_ENERGY_THRESHOLD = 60
+local HS_RIP_TEXTURE = "Ability_GhoulFrenzy"
+local HS_RAKE_TEXTURE = "Ability_Druid_Disembowel"
+local HS_DEBUG_LOG_MAX = 500
+local HS_SHIFT_RETRY_GAP = 0.25
 function HolyShift_OnLoad()
     if UnitClass("player") == "Druid" then
         this:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -18,6 +28,7 @@ function HolyShift_OnLoad()
         this:RegisterEvent("VARIABLES_LOADED")
         this:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
         this:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+        this:RegisterEvent("CHAT_MSG_SPELL_SELF_BUFF")
         this:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
         this:RegisterEvent("CHAT_MSG_MONSTER_YELL")
 		this:RegisterEvent("SPELL_FAILED_NOT_BEHIND")
@@ -122,14 +133,41 @@ function HolyShift_SlashCommand(msg)
 			HSAutoFF = 0
 			HSPrint('|cffd08524HolyShift |cffffffffAuto Faerie Fire |cffecd226Disabled. |cffd08524HSAutoFF = |cffffffff'..HSAutoFF)
 		end
+	elseif HScommand == "debug" then
+		local _,_, dbgSub, dbgArg = string.find(HSoption or "", "([%w%p]+)%s*(.*)$")
+		if HSoption == "on" then
+			HSDebugEnabled = 1
+			HSPrint('|cffd08524HolyShift |cffffffffDebug logging |cff24D040Enabled')
+		elseif HSoption == "off" then
+			HSDebugEnabled = 0
+			HSPrint('|cffd08524HolyShift |cffffffffDebug logging |cffD02424Disabled')
+		elseif HSoption == "clear" then
+			HSDebugLog = {}
+			HSPrint('|cffd08524HolyShift |cffffffffDebug log cleared')
+		elseif dbgSub == "show" then
+			HSDebugDump(dbgArg)
+		elseif HSoption == "status" or HSoption == "" then
+			if HSDebugEnabled == 1 then
+				HSPrint('|cffd08524HolyShift |cffffffffDebug logging: |cff24D040ON')
+			else
+				HSPrint('|cffd08524HolyShift |cffffffffDebug logging: |cffD02424OFF')
+			end
+			if HSDebugLog == nil then
+				HSDebugLog = {}
+			end
+			HSPrint('|cffd08524HolyShift |cffffffffDebug lines stored: |cffecd226'..table.getn(HSDebugLog))
+			HSPrint('|cffd08524HolyShift |cffffffffUsage: |cffecd226/hsdps debug on|off|show 50|clear')
+		else
+			HSPrint('|cffd08524HolyShift |cffffffffDebug usage: |cffecd226/hsdps debug on|off|show 50|clear')
+		end
 	elseif HScommand == "weapon" then 
 		HSWeapon = HSoption
 		HSPrint('|cffd08524HolyShift HSWeapon = |cffecd226'..HSWeapon)
 	elseif HScommand == "offhand" then 
 		HSOffhand = HSoption
 		HSPrint('|cffd08524HolyShift HSOffhand = |cffecd226'..HSOffhand)
-	elseif HSCommand == nil or HSCommand == "" then
-		--HSPrint(HSCommand)
+	elseif HScommand == nil or HScommand == "" then
+		--HSPrint(HScommand)
 		HSPrint("---------------------")
 		HSPrint('|cffd08524HolyShift: |cffffffffMake a macro that just says |cffecd226/hsdps dps |cffffffffand put on the same key in human and cat form.')
 		if HSInnervateUse == 1 then
@@ -208,6 +246,7 @@ function HolyShift_OnEvent(event)
 	end
 	if event == "PLAYER_TARGET_CHANGED" then
 		doclaw = 0
+		HSDebugTrace("TARGET_CHANGED", "")
 		--[[curtime = GetTime()
 		combstarttime = GetTime()
 		temptime = GetTime()
@@ -225,6 +264,7 @@ function HolyShift_OnEvent(event)
 	end
 	
 	if event == "PLAYER_REGEN_DISABLED" then
+		HSDebugTrace("COMBAT_START", "")
 		curtime = GetTime()
 		combstarttime = GetTime()
 		temptime = GetTime()
@@ -240,6 +280,7 @@ function HolyShift_OnEvent(event)
 	end
 	
 	if event == "PLAYER_REGEN_ENABLED" then
+		HSDebugTrace("COMBAT_END", "")
 		if HSDeathrate == 1 then
 			DeathRate()
 		end
@@ -263,25 +304,30 @@ function HolyShift_OnEvent(event)
 	end
 	
 	if event == "UI_ERROR_MESSAGE" then
+		HSDebugTrace("UI_ERROR", tostring(arg1))
 		if (strfind(arg1, "You must be")) then
-			doclaw = 1
+			doclaw = GetTime() + 1.8
+			HSDebugTrace("DOCLAW_SET", "from UI_ERROR not behind")
 		end
 		if (strfind(arg1, "No charges remain")) then
 			SwapOutMCP(HSWeapon,HSOffhand)
 		end
 	end
 	if event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
-		if (strfind(arg1, "Your Claw")) then
-			if doclaw == 1 then
-				doclaw = 2
-			elseif doclaw == 2 then
-				doclaw = 0
-			end
-		end
+		HSDebugTrace("SPELL_SELF_DAMAGE", tostring(arg1))
 		if (strfind(arg1, "Your Shred")) then
 			if doclaw ~= 0 then
 				doclaw = 0
+				HSDebugTrace("DOCLAW_CLEAR", "successful shred")
 			end
+		end
+	end
+	if event == "CHAT_MSG_SPELL_SELF_BUFF" then
+		HSDebugTrace("SPELL_SELF_BUFF", tostring(arg1))
+		if strfind(tostring(arg1), "Cat Form") then
+			HSDebugTrace("SHIFT_SUCCESS", "Cat Form applied")
+		elseif strfind(tostring(arg1), "Reshift") then
+			HSDebugTrace("SHIFT_SUCCESS", "Reshift applied")
 		end
 	end
 	
@@ -359,6 +405,10 @@ function HolyShift_OnEvent(event)
 		end
 		
 		if UnitClass("player") == "Druid" then
+			hsSpellKnownCache = {}
+			hsSpellIndexCache = {}
+			hsReshiftChecked = false
+			hsHasReshift = false
             if HSInnervateUse == nil then
                 HSInnervateUse = 0
             else
@@ -420,6 +470,14 @@ function HolyShift_OnEvent(event)
             else
                 tonumber(HSAutoFF)
             end
+			if HSDebugEnabled == nil then
+				HSDebugEnabled = 0
+			else
+				tonumber(HSDebugEnabled)
+			end
+			if HSDebugLog == nil then
+				HSDebugLog = {}
+			end
 		end
 	end
 end
@@ -428,6 +486,79 @@ function HSPrint(msg)
         return
     end
     DEFAULT_CHAT_FRAME:AddMessage((msg))
+end
+function HSGetComboPoints()
+	local cp = GetComboPoints("player","target")
+	if cp == nil then
+		cp = GetComboPoints()
+	end
+	if cp == nil then
+		cp = 0
+	end
+	return cp
+end
+function HSDebugTrace(tag, detail)
+	if HSDebugEnabled ~= 1 then
+		return
+	end
+	if HSDebugLog == nil then
+		HSDebugLog = {}
+	end
+	local target = UnitName("target")
+	if target == nil then
+		target = "none"
+	end
+	local energy = UnitMana("player")
+	if energy == nil then
+		energy = -1
+	end
+	local cp = HSGetComboPoints()
+	local behind = 0
+	if BehindTarget ~= nil and BehindTarget() == true then
+		behind = 1
+	end
+	local rip = 0
+	if HasRip ~= nil and HasRip() == true then
+		rip = 1
+	end
+	local rake = 0
+	if HasRake ~= nil and HasRake() == true then
+		rake = 1
+	end
+	local ts = date("%H:%M:%S")
+	local line = "["..ts.."] "..tag.." E="..energy.." CP="..cp.." B="..behind.." Rip="..rip.." Rake="..rake.." doclaw="..tostring(doclaw).." T="..target
+	if detail ~= nil and detail ~= "" then
+		line = line.." | "..detail
+	end
+	table.insert(HSDebugLog, line)
+	while table.getn(HSDebugLog) > HS_DEBUG_LOG_MAX do
+		table.remove(HSDebugLog, 1)
+	end
+end
+function HSDebugDump(limit)
+	if HSDebugLog == nil then
+		HSDebugLog = {}
+	end
+	local num = tonumber(limit)
+	if num == nil or num < 1 then
+		num = 30
+	end
+	if num > HS_DEBUG_LOG_MAX then
+		num = HS_DEBUG_LOG_MAX
+	end
+	local total = table.getn(HSDebugLog)
+	if total == 0 then
+		HSPrint('|cffd08524HolyShift |cffffffffDebug log is empty')
+		return
+	end
+	local start = total - num + 1
+	if start < 1 then
+		start = 1
+	end
+	HSPrint('|cffd08524HolyShift |cffffffffDebug dump ('..start..'-'..total..' of '..total..')')
+	for i = start, total do
+		HSPrint(HSDebugLog[i])
+	end
 end
 function HSGetDruidMana()
 	if hsManaLibChecked == false then
@@ -449,11 +580,6 @@ function HSGetDruidMana()
 		end
 	end
 
-	if hsManaLibWarningPrinted == false then
-		hsManaLibWarningPrinted = true
-		HSPrint('|cffd08524HolyShift: |cffffffffDruidManaLib-1.0 not found. Powershift mana checks are disabled.')
-	end
-
 	return UnitMana('player'), UnitManaMax('player'), false
 end
 function EShift()
@@ -464,6 +590,95 @@ function EShift()
         CastShapeshiftForm(a)
         ToggleAutoAttack("off")
     end
+end
+function HSHasSpell(spellName)
+	if hsSpellKnownCache[spellName] ~= nil then
+		return hsSpellKnownCache[spellName] == 1
+	end
+	for i = 1, 400 do
+		local name = GetSpellName(i, "spell")
+		if name == nil then
+			break
+		end
+		if name == spellName then
+			hsSpellKnownCache[spellName] = 1
+			return true
+		end
+	end
+	hsSpellKnownCache[spellName] = 0
+	return false
+end
+function HSGetSpellIndex(spellName)
+	if hsSpellIndexCache[spellName] ~= nil then
+		if hsSpellIndexCache[spellName] > 0 then
+			return hsSpellIndexCache[spellName]
+		end
+		return nil
+	end
+	for i = 1, 400 do
+		local name = GetSpellName(i, "spell")
+		if name == nil then
+			break
+		end
+		if name == spellName then
+			hsSpellIndexCache[spellName] = i
+			return i
+		end
+	end
+	hsSpellIndexCache[spellName] = -1
+	return nil
+end
+function HSIsSpellReady(spellName)
+	local spellIndex = HSGetSpellIndex(spellName)
+	if spellIndex == nil then
+		return false
+	end
+	local start, duration, _ = GetSpellCooldown(spellIndex, "spell")
+	local cdLeft = start + duration - GetTime()
+	return cdLeft < 0.1
+end
+function HSCastSpellByIndex(spellName)
+	local spellIndex = HSGetSpellIndex(spellName)
+	if spellIndex == nil then
+		return false
+	end
+	CastSpell(spellIndex, "spell")
+	return true
+end
+function HSTryShift(contextTag)
+	if HSShiftUse ~= 1 then
+		return false
+	end
+	if GetTime() - hsLastShiftAttempt < HS_SHIFT_RETRY_GAP then
+		HSDebugTrace("SHIFT_SKIP", "throttled "..tostring(contextTag))
+		return false
+	end
+	hsLastShiftAttempt = GetTime()
+	if hsReshiftChecked == false then
+		hsHasReshift = HSHasSpell("Reshift")
+		hsReshiftChecked = true
+		if hsHasReshift == true then
+			HSDebugTrace("RESHIFT", "detected in spellbook")
+		else
+			HSDebugTrace("RESHIFT", "not found; fallback to Cat Form shift")
+		end
+	end
+	if hsHasReshift == true then
+		if HSIsSpellReady("Reshift") == false then
+			HSDebugTrace("SHIFT_WAIT", "Reshift cooldown "..tostring(contextTag))
+			return false
+		end
+		HSDebugTrace("SHIFT", "Reshift "..tostring(contextTag))
+		HSCastSpellByIndex("Reshift")
+	else
+		if IsSpellOnCD("Cat Form") then
+			HSDebugTrace("SHIFT_WAIT", "Cat Form cooldown "..tostring(contextTag))
+			return false
+		end
+		HSDebugTrace("SHIFT", "EShift "..tostring(contextTag))
+		EShift()
+	end
+	return true
 end
 function QuickShift()
     local a,c=GetActiveForm()
@@ -492,8 +707,6 @@ function HolyShiftAddon()
 	local partynum = GetNumPartyMembers()
 	local romcooldown,romeq,rombag,romslot = ItemInfo('Rune of Metamorphosis')
 	local jgcd,jgeq,jgbag,jgslot = ItemInfo('Jom Gabbar')
-	local clawab = "Claw"
-	local shredab = "Shred"
 	local flcd,_,flbag,flslot = ItemInfo('Juju Flurry')
 	local lipcd,_,lipbag,lipslot = ItemInfo('Limited Invulnerability Potion')
 	local natshapeshiftr = SpecCheck(1,7)
@@ -518,31 +731,21 @@ function HolyShiftAddon()
 					elseif(not IsSpellOnCD("Barkskin")) then
 						EShift()
 					else
-						Atk(clawab,stealthed,romactive,romcooldown)
+						Atk("Auto",stealthed,romactive,romcooldown)
 					end
 				else --Else if target is not a boss
 					if partynum > 2 then
 						if(not IsSpellOnCD("Cower")) and HSCowerUse == 1 then
 							CastSpellByName("Cower")
 						else
-							Atk(clawab,stealthed,romactive,romcooldown)
+							Atk("Auto",stealthed,romactive,romcooldown)
 						end
 					else
-						Atk(clawab,stealthed,romactive,romcooldown)
+						Atk("Auto",stealthed,romactive,romcooldown)
 					end
 				end
 			else
-				if HSClawAdd == 1 then
-					Atk(clawab,stealthed,romactive,romcooldown)
-				else
-					if doclaw == 0 then 
-						Atk(shredab,stealthed,romactive,romcooldown)
-					elseif doclaw == 1 then
-						Atk(clawab,stealthed,romactive,romcooldown)
-					elseif doclaw == 2 then
-						Atk(clawab,stealthed,romactive,romcooldown)
-					end
-				end
+				Atk("Auto",stealthed,romactive,romcooldown)
 			end
 		end
 	else
@@ -579,61 +782,38 @@ function HolyShiftAddon()
 		end
 	end
 end
+
 function Atk(CorS,stealthyn,romyn,romcd)
 	StAttack(1)
-	local abiltext = nil
+	local comboPoints = HSGetComboPoints()
 	local ferocity = SpecCheck(2,1)
 	local idolofferocity = 0
 	local shth = 15
+	local rakeCost = 40 - ferocity
 	local impshred = SpecCheck(2,9)
-	local copobu = 100 - (40 + impshred*6 + 20)
 	local shredtext = "Spell_Shadow_VampiricAura"
 	local clawtext = "Ability_Druid_Rake"
+	local shredCost = 100 - (40 + impshred*6 + 20)
+	local clawCost = 100 - (55 + ferocity + 20 + idolofferocity)
+	local builderSpell = "Claw"
+	local builderTexture = clawtext
+	local builderCost = clawCost
+	local builderSlot = 0
 	local kotscd,kotseq,kotsbag,kotsslot = ItemInfo('Kiss of the Spider')
 	local escd,eseq,esbag,esslot = ItemInfo('Earthstrike')
 	local zhmcd,zhmeq,zhmbag,zhmslot = ItemInfo('Zandalarian Hero Medallion')
-	local fbthresh = 4
+	local fbthresh = 5
 	if(romyn == true) then
 		shth = 30
 	end
 	if GetInventoryItemLink('player',18) ~= nil then
 		if(string.find(GetInventoryItemLink('player',18), 'Idol of Ferocity')) then
 			idolofferocity = 3
+			clawCost = 100 - (55 + ferocity + 20 + idolofferocity)
+			builderCost = clawCost
 		end
 	end
-	if UnitLevel('target') ~= -1 then
-		if UnitLevel('target') > 60 then
-			if UnitHealth('target') < 30 then
-				if UnitHealth('target') > 10 then
-					fbthresh = 4
-				elseif UnitHealth('target') > 5 then
-					fbthresh = 2
-				else
-					fbthresh = 1
-				end
-			end
-		elseif UnitLevel('target') > 55 then
-			if UnitHealth('target') > 30 then
-				fbthresh = 4
-			else
-				if UnitHealth('target') > 10 then
-					fbthresh = 2
-				else
-					fbthresh = 1
-				end
-			end
-		else
-			if UnitHealth('target') > 45 then
-				fbthresh = 3
-			else
-				if UnitHealth('target') > 10 then
-					fbthresh = 2
-				else
-					fbthresh = 1
-				end
-			end
-		end
-	else
+	if UnitLevel('target') == -1 then
 		PopSkeleton()
 		if HSMCPUse == 1 then 
 			Pummel() 
@@ -648,64 +828,147 @@ function Atk(CorS,stealthyn,romyn,romcd)
 			UseItemByName("Zandalarian Hero Medallion")
 		end
 	end
+	if BehindTarget() == true and UnitMana('Player') >= HS_SHRED_ENERGY_THRESHOLD then
+		builderSpell = "Shred"
+		builderTexture = shredtext
+		builderCost = shredCost
+	end
+	builderSlot = FindActionSlot(builderTexture)
+	if builderSpell == "Shred" and builderSlot == 0 then
+		builderSpell = "Claw"
+		builderTexture = clawtext
+		builderCost = clawCost
+		builderSlot = FindActionSlot(builderTexture)
+		HSDebugTrace("BUILDER_FALLBACK", "Shred slot missing; fallback to Claw")
+	end
+	HSDebugTrace("ATK_THRESHOLDS", "CorS="..tostring(CorS).." builder="..builderSpell.." bcost="..tostring(builderCost).." fbthresh="..tostring(fbthresh).." shth="..tostring(shth))
 	if UnitIsDead('target') then
 		doclaw = 0
-	end
-	if CorS == "Claw" then
-		abiltext = clawtext
-		copobu = 100 - (55 + ferocity + 20 + idolofferocity)
-	elseif CorS == "Shred" then
-		abiltext = shredtext
+		HSDebugTrace("TARGET_DEAD", "")
+		return
 	end
 
-	if CheckInteractDistance('target',3) ~= 1 then
-		if IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false then
+	-- Keep Tiger's Fury up when possible, but do not delay high-point finish windows.
+	if HSTigerUse == 1
+	and stealthyn == false
+	and HSBuffChk('Ability_Mount_JungleTiger') == false
+	and (not IsSpellOnCD("Tiger's Fury"))
+	and UnitMana('Player') >= 30
+	and comboPoints < 4
+	and (CheckInteractDistance('target',3) == 1 or MobTooFar() == true) then
+		HSDebugTrace("CAST", "Tiger's Fury")
+		CastSpellByName("Tiger's Fury(Rank 4)")
+		return
+	end
+
+	-- Keep Rake up as a primary rotation priority before builder/finisher casts.
+	if stealthyn == false
+	and CheckInteractDistance('target',3) == 1
+	and comboPoints < fbthresh
+	and IsTDebuff('target', 'Ability_Druid_Disembowel') == false
+	and IsUse(FindActionSlot("Ability_Druid_Rake")) == 1
+	and (not IsSpellOnCD("Rake"))
+	and (HSBuffChk("Spell_Shadow_ManaBurn") == true or UnitMana('Player') >= rakeCost) then
+		HSDebugTrace("CAST", "Rake (missing)")
+		CastSpellByName("Rake")
+		return
+	end
+
+	-- Apply Faerie Fire promptly while in melee if enabled and missing.
+	if HSAutoFF == 1
+	and stealthyn == false
+	and UnitExists("target")
+	and CheckInteractDistance('target',3) == 1
+	and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false
+	and (not IsSpellOnCD("Faerie Fire (Feral)"))
+	and comboPoints < fbthresh then
+		HSDebugTrace("CAST", "Faerie Fire (missing close)")
+		CastSpellByName("Faerie Fire (Feral)(Rank 4)")
+		return
+	end
+
+	if CheckInteractDistance('target',3) ~= 1 and MobTooFar() == false then
+		if UnitExists("target")
+		and HSAutoFF == 1
+		and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false
+		and stealthyn == false
+		and (not IsSpellOnCD("Faerie Fire (Feral)")) then
+			HSDebugTrace("CAST", "Faerie Fire (out of range)")
 			CastSpellByName("Faerie Fire (Feral)(Rank 4)")
 		end
-		if HSBuffChk('Ability_Mount_JungleTiger') == false and UnitMana('Player') >= copobu + 30 and HSTigerUse == 1 then
-			CastSpellByName("Tiger's Fury(Rank 4)")
-		end
 	end
-	if (HSBuffChk("Spell_Shadow_ManaBurn") == false) then
-		if(GetComboPoints("unit","target")<fbthresh) then
-			if UnitMana('Player')>=copobu then
-				if IsUse(FindActionSlot(abiltext)) == 1 then
-					if not IsSpellOnCD(CorS) then
-						CastSpellByName(CorS)
-						--HSPrint(doclaw)
+	if(comboPoints<fbthresh) then
+		HSDebugTrace("BUILDER_PHASE", "comboPoints<fbthresh")
+		if UnitMana('Player')>=builderCost or HSBuffChk("Spell_Shadow_ManaBurn") == true then
+			if builderSlot ~= 0 and IsUse(builderSlot) == 1 then
+				if not IsSpellOnCD(builderSpell) then
+					if HSBuffChk("Spell_Shadow_ManaBurn") == true then
+						HSDebugTrace("CAST", builderSpell.." (builder clearcasting)")
+					else
+						HSDebugTrace("CAST", builderSpell.." (builder)")
+					end
+					CastSpellByName(builderSpell)
+					--HSPrint(doclaw)
+				end
+			elseif builderSlot == 0 then
+				HSDebugTrace("BUILDER_UNAVAILABLE", builderSpell.." action slot not found")
+			end
+		else
+			HSDebugTrace("LOW_ENERGY", "builder mana low; attempting FF/shift")
+			if UnitAffectingCombat('Player') and UnitExists("target") then
+				if CanShift() == true then
+					if HSTryShift("builder low energy") == true then
+						return
 					end
 				end
-			else
-				if UnitAffectingCombat('Player') and UnitExists("target") then
-					if IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
-						CastSpellByName("Faerie Fire (Feral)(Rank 4)")
+				if IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
+					HSDebugTrace("CAST", "Faerie Fire (energy gap)")
+					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
+				end
+			end
+		end
+	else
+		HSDebugTrace("FINISHER_PHASE", "comboPoints>=fbthresh")
+		local finisherEnergy = shth
+		if comboPoints == 5 and HasRip() == false then
+			finisherEnergy = 30
+		end
+		if UnitMana('Player')>=finisherEnergy or HSBuffChk("Spell_Shadow_ManaBurn") == true then
+			if comboPoints == 5 and HasRip() == false then
+				if not IsSpellOnCD("Rip") then
+					if HSBuffChk("Spell_Shadow_ManaBurn") == true then
+						HSDebugTrace("CAST", "Rip (opener @5cp clearcasting)")
+					else
+						HSDebugTrace("CAST", "Rip (opener @5cp)")
 					end
-					
-					if CanShift() == true then
-						EShift()
+					CastSpellByName("Rip")
+				end
+			else
+				if IsUse(FindActionSlot("Ability_Druid_FerociousBite")) == 1 then
+					if not IsSpellOnCD("Ferocious Bite") then
+						if HSBuffChk("Spell_Shadow_ManaBurn") == true then
+							HSDebugTrace("CAST", "Ferocious Bite (clearcasting)")
+						else
+							HSDebugTrace("CAST", "Ferocious Bite")
+						end
+						CastSpellByName("Ferocious Bite")
 					end
 				end
 			end
 		else
-			if UnitMana('Player')>=shth then
-				if IsUse(FindActionSlot("Ability_Druid_FerociousBite")) == 1 then
-					if not IsSpellOnCD("Ferocious Bite") then
-						CastSpellByName("Ferocious Bite")
+			HSDebugTrace("LOW_ENERGY", "finisher mana low; attempting FF/shift")
+			if UnitAffectingCombat('Player') and UnitExists("target") then
+				if CanShift() == true then
+					if HSTryShift("finisher low energy") == true then
+						return
 					end
 				end
-			else
-				if UnitAffectingCombat('Player') and UnitExists("target") then
-					if IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
-						CastSpellByName("Faerie Fire (Feral)(Rank 4)")
-					end
-					if CanShift() == true then
-						EShift()
-					end
+				if IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
+					HSDebugTrace("CAST", "Faerie Fire (finisher energy gap)")
+					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
 				end
 			end
 		end
-	elseif (not IsSpellOnCD(CorS)) then
-		CastSpellByName(CorS)
 	end
 end
 function MobTooFar()
@@ -731,8 +994,17 @@ function CanShift()
 	local nervcd = nervdur - (GetTime() - nervst)
 	local romcooldown,romeq,rombag,romslot = ItemInfo('Rune of Metamorphosis')
 	local romactive = HSBuffChk("INV_Misc_Rune")
-	if hasDruidManaLib == false then
+	if HSShiftUse ~= 1 then
 		return false
+	end
+	if hasDruidManaLib == false then
+		-- Without DruidManaLib we cannot read hidden druid mana in cat form.
+		-- Allow attempt-based powershifting from low-energy branches.
+		if hsManaLibFallbackNotice == false then
+			hsManaLibFallbackNotice = true
+			HSPrint('|cffd08524HolyShift: |cffffffffDruidManaLib missing. Using fallback powershift mode.')
+		end
+		return true
 	end
 	if UnitName('target') == 'Loatheb' then
 		--manathreshold = 900
@@ -742,7 +1014,7 @@ function CanShift()
 	or (romactive == true and romcooldown > 282 and UnitLevel('target') == -1)
 	or (mpcd == 0 and HSMPUse == 1 and UnitLevel('target') == -1 )
 	or (drcd == 0 and HSDRUse == 1 and UnitLevel('target') == -1 )) 
-	and HSShiftUse == 1 then
+	then
 		canshift = true
 	end
 	
@@ -983,6 +1255,49 @@ function IsTDebuff(target, debuff)
 		end
     end
     return isDebuff
+end
+function DebuffRemaining(texture)
+	for i = 1, 40 do
+		local debuffTexture = UnitDebuff("target", i)
+		if(strfind(tostring(debuffTexture), texture)) then
+			local _, _, _, _, _, _, expirationTime = UnitDebuff("target", i)
+			if type(expirationTime) == "number" and expirationTime > 0 then
+				local remaining = expirationTime - GetTime()
+				if remaining < 0 then
+					remaining = 0
+				end
+				return remaining
+			end
+			-- Fallback for clients where expiration metadata is unavailable.
+			return 1
+		end
+	end
+	return 0
+end
+function HasRip()
+	return IsTDebuff("target", HS_RIP_TEXTURE)
+end
+function HasRake()
+	return IsTDebuff("target", HS_RAKE_TEXTURE)
+end
+function RipRemaining()
+	return DebuffRemaining(HS_RIP_TEXTURE)
+end
+function RakeRemaining()
+	return DebuffRemaining(HS_RAKE_TEXTURE)
+end
+function BehindTarget()
+	if UnitExists("target") ~= 1 then
+		return false
+	end
+	if CheckInteractDistance("target",3) ~= 1 then
+		return false
+	end
+	-- doclaw is currently a short timestamp lockout after "must be behind" errors.
+	if doclaw ~= 0 and GetTime() <= doclaw then
+		return false
+	end
+	return true
 end
 function DeathRate()
 	local totalaverage = 0
