@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## X-ClientVersion: 1.17.2
 ## X-PatchVersion: 11.1.2
-## Version: 1.17.3
-## X-AddonVersion: 1.17.3
+## Version: 1.17.4
+## X-AddonVersion: 1.17.4
 ## Title: HolyShift
 ## Notes: Max cat dps
 ## Author: Miioon (maintainer), Maulbatross K3 (original author)

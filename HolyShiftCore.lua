@@ -20,6 +20,8 @@ local HS_RIP_TEXTURE = "Ability_GhoulFrenzy"
 local HS_RAKE_TEXTURE = "Ability_Druid_Disembowel"
 local HS_DEBUG_LOG_MAX = 500
 local HS_SHIFT_RETRY_GAP = 0.25
+local HS_NOT_BEHIND_LOCKOUT = 1.0
+local HS_FF_REFRESH_MAX_CP = 2
 function HolyShift_OnLoad()
     if UnitClass("player") == "Druid" then
         this:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -306,7 +308,7 @@ function HolyShift_OnEvent(event)
 	if event == "UI_ERROR_MESSAGE" then
 		HSDebugTrace("UI_ERROR", tostring(arg1))
 		if (strfind(arg1, "You must be")) then
-			doclaw = GetTime() + 1.8
+			doclaw = GetTime() + HS_NOT_BEHIND_LOCKOUT
 			HSDebugTrace("DOCLAW_SET", "from UI_ERROR not behind")
 		end
 		if (strfind(arg1, "No charges remain")) then
@@ -328,6 +330,8 @@ function HolyShift_OnEvent(event)
 			HSDebugTrace("SHIFT_SUCCESS", "Cat Form applied")
 		elseif strfind(tostring(arg1), "Reshift") then
 			HSDebugTrace("SHIFT_SUCCESS", "Reshift applied")
+		elseif strfind(tostring(arg1), "Furor") then
+			HSDebugTrace("SHIFT_SUCCESS", "Furor energy gain")
 		end
 	end
 	
@@ -664,12 +668,18 @@ function HSTryShift(contextTag)
 		end
 	end
 	if hsHasReshift == true then
-		if HSIsSpellReady("Reshift") == false then
-			HSDebugTrace("SHIFT_WAIT", "Reshift cooldown "..tostring(contextTag))
+		if HSIsSpellReady("Reshift") == true then
+			HSDebugTrace("SHIFT", "Reshift "..tostring(contextTag))
+			HSCastSpellByIndex("Reshift")
+			return true
+		end
+		if IsSpellOnCD("Cat Form") then
+			HSDebugTrace("SHIFT_WAIT", "Reshift/Cat cooldown "..tostring(contextTag))
 			return false
 		end
-		HSDebugTrace("SHIFT", "Reshift "..tostring(contextTag))
-		HSCastSpellByIndex("Reshift")
+		HSDebugTrace("SHIFT", "EShift fallback "..tostring(contextTag))
+		EShift()
+		return true
 	else
 		if IsSpellOnCD("Cat Form") then
 			HSDebugTrace("SHIFT_WAIT", "Cat Form cooldown "..tostring(contextTag))
@@ -677,8 +687,9 @@ function HSTryShift(contextTag)
 		end
 		HSDebugTrace("SHIFT", "EShift "..tostring(contextTag))
 		EShift()
+		return true
 	end
-	return true
+	return false
 end
 function QuickShift()
     local a,c=GetActiveForm()
@@ -881,7 +892,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 	and CheckInteractDistance('target',3) == 1
 	and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false
 	and (not IsSpellOnCD("Faerie Fire (Feral)"))
-	and comboPoints < fbthresh then
+	and comboPoints <= HS_FF_REFRESH_MAX_CP then
 		HSDebugTrace("CAST", "Faerie Fire (missing close)")
 		CastSpellByName("Faerie Fire (Feral)(Rank 4)")
 		return
@@ -921,7 +932,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 						return
 					end
 				end
-				if IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
+				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
 					HSDebugTrace("CAST", "Faerie Fire (energy gap)")
 					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
 				end
@@ -963,7 +974,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 						return
 					end
 				end
-				if IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
+				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
 					HSDebugTrace("CAST", "Faerie Fire (finisher energy gap)")
 					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
 				end
