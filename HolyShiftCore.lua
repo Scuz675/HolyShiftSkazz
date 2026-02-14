@@ -24,6 +24,11 @@ local HS_NOT_BEHIND_LOCKOUT = 1.0
 local HS_FF_REFRESH_MAX_CP = 2
 local hsDebuffImmune = { target = "", rip = false, rake = false, ff = false }
 
+local function HSSetNotBehindLockout(source)
+	doclaw = GetTime() + HS_NOT_BEHIND_LOCKOUT
+	HSDebugTrace("DOCLAW_SET", tostring(source or ""))
+end
+
 local function HSGetTargetKey()
 	local name = UnitName("target")
 	if name == nil then
@@ -363,13 +368,17 @@ function HolyShift_OnEvent(event)
 	
 	if event == "UI_ERROR_MESSAGE" then
 		HSDebugTrace("UI_ERROR", tostring(arg1))
-		if (strfind(arg1, "You must be")) then
-			doclaw = GetTime() + HS_NOT_BEHIND_LOCKOUT
-			HSDebugTrace("DOCLAW_SET", "from UI_ERROR not behind")
+		local uiErr = string.lower(tostring(arg1 or ""))
+		if strfind(uiErr, "must be") and strfind(uiErr, "behind") then
+			HSSetNotBehindLockout("from UI_ERROR not behind")
 		end
 		if (strfind(arg1, "No charges remain")) then
 			SwapOutMCP(HSWeapon,HSOffhand)
 		end
+	end
+	if event == "SPELL_FAILED_NOT_BEHIND" then
+		HSDebugTrace("SPELL_FAILED_NOT_BEHIND", tostring(arg1))
+		HSSetNotBehindLockout("from SPELL_FAILED_NOT_BEHIND")
 	end
 	if event == "CHAT_MSG_COMBAT_SELF_MISSES" then
 		HSDebugTrace("COMBAT_SELF_MISSES", tostring(arg1))
@@ -980,6 +989,17 @@ function Atk(CorS,stealthyn,romyn,romcd)
 		if UnitMana('Player')>=builderCost or HSBuffChk("Spell_Shadow_ManaBurn") == true then
 			if builderSlot ~= 0 and IsUse(builderSlot) == 1 then
 				if not IsSpellOnCD(builderSpell) then
+					if builderSpell == "Shred" and BehindTarget() ~= true then
+						HSDebugTrace("BUILDER_GUARD", "Shred blocked by behind check; fallback to Claw")
+						builderSpell = "Claw"
+						builderTexture = clawtext
+						builderCost = clawCost
+						builderSlot = FindActionSlot(builderTexture)
+					end
+					if builderSlot == 0 or IsUse(builderSlot) ~= 1 then
+						HSDebugTrace("BUILDER_UNAVAILABLE", builderSpell.." fallback unusable")
+						return
+					end
 					if HSBuffChk("Spell_Shadow_ManaBurn") == true then
 						HSDebugTrace("CAST", builderSpell.." (builder clearcasting)")
 					else
