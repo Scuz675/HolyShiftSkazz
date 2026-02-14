@@ -22,6 +22,61 @@ local HS_DEBUG_LOG_MAX = 500
 local HS_SHIFT_RETRY_GAP = 0.25
 local HS_NOT_BEHIND_LOCKOUT = 1.0
 local HS_FF_REFRESH_MAX_CP = 2
+local hsDebuffImmune = { target = "", rip = false, rake = false, ff = false }
+
+local function HSGetTargetKey()
+	local name = UnitName("target")
+	if name == nil then
+		return ""
+	end
+	return tostring(name)
+end
+
+local function HSResetDebuffImmunity(targetKey)
+	hsDebuffImmune.target = targetKey or HSGetTargetKey()
+	hsDebuffImmune.rip = false
+	hsDebuffImmune.rake = false
+	hsDebuffImmune.ff = false
+end
+
+local function HSIsDebuffImmune(spellKey)
+	local targetKey = HSGetTargetKey()
+	if hsDebuffImmune.target ~= targetKey then
+		HSResetDebuffImmunity(targetKey)
+	end
+	return hsDebuffImmune[spellKey] == true
+end
+
+local function HSMarkDebuffImmune(spellKey, sourceMsg)
+	local targetKey = HSGetTargetKey()
+	if targetKey == "" then
+		return
+	end
+	if hsDebuffImmune.target ~= targetKey then
+		HSResetDebuffImmunity(targetKey)
+	end
+	if hsDebuffImmune[spellKey] ~= true then
+		hsDebuffImmune[spellKey] = true
+		HSDebugTrace("IMMUNE_SET", spellKey.." target="..targetKey.." msg="..tostring(sourceMsg))
+	end
+end
+
+local function HSHandleSelfCombatMessage(msg)
+	local lower = string.lower(tostring(msg or ""))
+	if lower == "" then
+		return
+	end
+	if not strfind(lower, "immune") then
+		return
+	end
+	if strfind(lower, "rip") then
+		HSMarkDebuffImmune("rip", msg)
+	elseif strfind(lower, "rake") then
+		HSMarkDebuffImmune("rake", msg)
+	elseif strfind(lower, "faerie fire") then
+		HSMarkDebuffImmune("ff", msg)
+	end
+end
 function HolyShift_OnLoad()
     if UnitClass("player") == "Druid" then
         this:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -248,6 +303,7 @@ function HolyShift_OnEvent(event)
 	end
 	if event == "PLAYER_TARGET_CHANGED" then
 		doclaw = 0
+		HSResetDebuffImmunity(HSGetTargetKey())
 		HSDebugTrace("TARGET_CHANGED", "")
 		--[[curtime = GetTime()
 		combstarttime = GetTime()
@@ -315,8 +371,13 @@ function HolyShift_OnEvent(event)
 			SwapOutMCP(HSWeapon,HSOffhand)
 		end
 	end
+	if event == "CHAT_MSG_COMBAT_SELF_MISSES" then
+		HSDebugTrace("COMBAT_SELF_MISSES", tostring(arg1))
+		HSHandleSelfCombatMessage(arg1)
+	end
 	if event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
 		HSDebugTrace("SPELL_SELF_DAMAGE", tostring(arg1))
+		HSHandleSelfCombatMessage(arg1)
 		if (strfind(arg1, "Your Shred")) then
 			if doclaw ~= 0 then
 				doclaw = 0
@@ -797,6 +858,9 @@ end
 function Atk(CorS,stealthyn,romyn,romcd)
 	StAttack(1)
 	local comboPoints = HSGetComboPoints()
+	local canRake = not HSIsDebuffImmune("rake")
+	local canFF = not HSIsDebuffImmune("ff")
+	local canRip = not HSIsDebuffImmune("rip")
 	local ferocity = SpecCheck(2,1)
 	local idolofferocity = 0
 	local shth = 15
@@ -876,6 +940,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 	if stealthyn == false
 	and CheckInteractDistance('target',3) == 1
 	and comboPoints < fbthresh
+	and canRake
 	and IsTDebuff('target', 'Ability_Druid_Disembowel') == false
 	and IsUse(FindActionSlot("Ability_Druid_Rake")) == 1
 	and (not IsSpellOnCD("Rake"))
@@ -890,6 +955,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 	and stealthyn == false
 	and UnitExists("target")
 	and CheckInteractDistance('target',3) == 1
+	and canFF
 	and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false
 	and (not IsSpellOnCD("Faerie Fire (Feral)"))
 	and comboPoints <= HS_FF_REFRESH_MAX_CP then
@@ -901,6 +967,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 	if CheckInteractDistance('target',3) ~= 1 and MobTooFar() == false then
 		if UnitExists("target")
 		and HSAutoFF == 1
+		and canFF
 		and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false
 		and stealthyn == false
 		and (not IsSpellOnCD("Faerie Fire (Feral)")) then
@@ -932,7 +999,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 						return
 					end
 				end
-				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
+				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 and canFF then
 					HSDebugTrace("CAST", "Faerie Fire (energy gap)")
 					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
 				end
@@ -941,11 +1008,12 @@ function Atk(CorS,stealthyn,romyn,romcd)
 	else
 		HSDebugTrace("FINISHER_PHASE", "comboPoints>=fbthresh")
 		local finisherEnergy = shth
-		if comboPoints == 5 and HasRip() == false then
+		local shouldRip = comboPoints == 5 and HasRip() == false and canRip
+		if shouldRip then
 			finisherEnergy = 30
 		end
 		if UnitMana('Player')>=finisherEnergy or HSBuffChk("Spell_Shadow_ManaBurn") == true then
-			if comboPoints == 5 and HasRip() == false then
+			if shouldRip then
 				if not IsSpellOnCD("Rip") then
 					if HSBuffChk("Spell_Shadow_ManaBurn") == true then
 						HSDebugTrace("CAST", "Rip (opener @5cp clearcasting)")
@@ -974,7 +1042,7 @@ function Atk(CorS,stealthyn,romyn,romcd)
 						return
 					end
 				end
-				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 then
+				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 and canFF then
 					HSDebugTrace("CAST", "Faerie Fire (finisher energy gap)")
 					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
 				end
