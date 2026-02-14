@@ -7,6 +7,9 @@ local temptime = nil
 local numtargets = 0
 local reportthreshold = 80
 local playername,_ = UnitName('player')
+local hsManaLib = nil
+local hsManaLibChecked = false
+local hsManaLibWarningPrinted = false
 function HolyShift_OnLoad()
     if UnitClass("player") == "Druid" then
         this:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -426,6 +429,33 @@ function HSPrint(msg)
     end
     DEFAULT_CHAT_FRAME:AddMessage((msg))
 end
+function HSGetDruidMana()
+	if hsManaLibChecked == false then
+		hsManaLibChecked = true
+		if DruidManaLib ~= nil and type(DruidManaLib.GetMana) == "function" then
+			hsManaLib = DruidManaLib
+		elseif type(AceLibrary) == "function" then
+			local ok, lib = pcall(AceLibrary, "DruidManaLib-1.0")
+			if ok and lib ~= nil and type(lib.GetMana) == "function" then
+				hsManaLib = lib
+			end
+		end
+	end
+
+	if hsManaLib ~= nil then
+		local ok, currentMana, maxMana = pcall(hsManaLib.GetMana, hsManaLib)
+		if ok and type(currentMana) == "number" and type(maxMana) == "number" then
+			return currentMana, maxMana, true
+		end
+	end
+
+	if hsManaLibWarningPrinted == false then
+		hsManaLibWarningPrinted = true
+		HSPrint('|cffd08524HolyShift: |cffffffffDruidManaLib-1.0 not found. Powershift mana checks are disabled.')
+	end
+
+	return UnitMana('player'), UnitManaMax('player'), false
+end
 function EShift()
     local a,c=GetActiveForm()
     if(a==0) then
@@ -557,7 +587,6 @@ function Atk(CorS,stealthyn,romyn,romcd)
 	local shth = 15
 	local impshred = SpecCheck(2,9)
 	local copobu = 100 - (40 + impshred*6 + 20)
-	local currentMana, maxMana = AceLibrary("DruidManaLib-1.0"):GetMana()
 	local shredtext = "Spell_Shadow_VampiricAura"
 	local clawtext = "Ability_Druid_Rake"
 	local kotscd,kotseq,kotsbag,kotsslot = ItemInfo('Kiss of the Spider')
@@ -693,7 +722,7 @@ function MobTooFar()
 end
 function CanShift()
 	local canshift = false
-	local currentMana, maxMana = AceLibrary("DruidManaLib-1.0"):GetMana()
+	local currentMana, maxMana, hasDruidManaLib = HSGetDruidMana()
 	local manathreshold = 90
 	local mpcd,_,mpbag,mpslot = ItemInfo('Major Mana Potion')
 	local smcd,_,smbag,smslot = ItemInfo('Superior Mana Potion')
@@ -702,6 +731,9 @@ function CanShift()
 	local nervcd = nervdur - (GetTime() - nervst)
 	local romcooldown,romeq,rombag,romslot = ItemInfo('Rune of Metamorphosis')
 	local romactive = HSBuffChk("INV_Misc_Rune")
+	if hasDruidManaLib == false then
+		return false
+	end
 	if UnitName('target') == 'Loatheb' then
 		--manathreshold = 900
 	end
@@ -1161,7 +1193,7 @@ end
 --------------------------------------------------------
 function QuickCast(spell,target)
 	local pwrtype=UnitPowerType('Player')
-	local curMana, mxMana = AceLibrary("DruidManaLib-1.0"):GetMana()
+	local curMana, mxMana = HSGetDruidMana()
 	if HSBuffChk('TravelForm') == true or HSBuffChk('AquaticForm') == true then
 		QuickShift()
 	elseif pwrtype == 3 then
@@ -1228,7 +1260,6 @@ function QuickHT()
 	local pwrtype=UnitPowerType('Player')
 	local ranks = {'Healing Touch(Rank 11)','Healing Touch(Rank 10)','Healing Touch(Rank 9)','Healing Touch(Rank 8)',
 	'Healing Touch(Rank 7)','Healing Touch(Rank 6)','Healing Touch(Rank 5)','Healing Touch(Rank 4)','Healing Touch(Rank 3)'}
-	local curMana, mxMana = AceLibrary("DruidManaLib-1.0"):GetMana()
 	local manacost = {1277,1197,1077,972,882,812,747,662,587}
 	local healththreshold = {0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.98}
 	if UnitHealth('player') < UnitHealthMax('player') then
