@@ -1,6 +1,7 @@
 # HolyShift
 A cat druid one-button dps addon for vanilla WoW 1.12 and other useful feral druid functions.
-# Created by: Maulbatross (Kronos 3)
+# Maintained by: Miioon (Turtle WoW)
+# Original addon by: Maulbatross (Kronos 3)
 - Functions borrowed from CatDruidDPS by Cernie and modified for efficiency and compatibility when necessary:
   - HSBuffChk
   - FindAttackActionSlot

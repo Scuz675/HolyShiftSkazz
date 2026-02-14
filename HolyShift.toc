@@ -1,7 +1,9 @@
-## Interface: 12000
+## Interface: 11200
+## X-ClientVersion: 1.17.2
+## X-PatchVersion: 11.1.2
 ## Title: HolyShift
 ## Notes: Max cat dps
-## Author: Maulbatross K3
+## Author: Miioon (maintainer), Maulbatross K3 (original author)
 ## SavedVariables: HSInnervateUse,HSMCPUse,HSMPUse,HSDRUse,HSFLUse,HSClawAdd,HSTigerUse,HSShiftUse,HSCowerUse,HSWeapon,HSOffhand,HSDeathrate,HSAutoFF
 ## DefaultState: enabled
 HolyShift.xml

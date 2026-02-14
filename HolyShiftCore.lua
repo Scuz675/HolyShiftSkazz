@@ -283,7 +283,7 @@ function HolyShift_OnEvent(event)
 	end
 	
 	if event == "VARIABLES_LOADED" then
-		HSPrint('|cffd08524HolyShift by Maulbatross Loaded')
+		HSPrint('|cffd08524HolyShift by Miioon |cffffffff(Original by Maulbatross) |cffd08524Loaded')
 		HSPrint('|cffd08524HolyShift: |cffffffffType |cffecd226/hsdps |cffffffffto show options')
 		if HSInnervateUse == 1 then
 			HSPrint('|cffd08524HolyShift: |cffffffffInnervate |cff24D040Enabled')
