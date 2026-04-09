@@ -1,8 +1,11 @@
 ## Interface: 11200
+## X-ClientVersion: 1.17.2
+## X-PatchVersion: 11.1.2
+## Version: 1.17.4
+## X-AddonVersion: 1.17.4
 ## Title: HolyShift
-## Notes: Multi-form Druid Automation (Cat, Bear, Balance)
-## Author: Maulbatross, Miioon
-## Version: 2.0.0
+## Notes: Max cat dps
+## Author: Miioon (maintainer), Maulbatross K3 (original author)
 ## SavedVariables: HSInnervateUse,HSMCPUse,HSMPUse,HSDRUse,HSFLUse,HSClawAdd,HSTigerUse,HSShiftUse,HSCowerUse,HSWeapon,HSOffhand,HSDeathrate,HSAutoFF,HSDebugEnabled,HSDebugLog
-
-HolyShiftCore.lua
+## DefaultState: enabled
+HolyShift.xml
