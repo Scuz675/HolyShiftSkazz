@@ -7,6 +7,7 @@ local temptime = nil
 local numtargets = 0
 local reportthreshold = 80
 local playername,_ = UnitName('player')
+HSMode = "single"
 local hsManaLib = nil
 local hsManaLibChecked = false
 local hsManaLibFallbackNotice = false
@@ -22,6 +23,14 @@ local HS_DEBUG_LOG_MAX = 500
 local HS_SHIFT_RETRY_GAP = 0.25
 local HS_NOT_BEHIND_LOCKOUT = 1.0
 local HS_FF_REFRESH_MAX_CP = 2
+local HS_BEAR_MAUL_RAGE = 45
+local HS_BEAR_SWIPE_RAGE = 35
+local HS_BEAR_DEMO_RAGE = 10
+local HS_BEAR_MAUL_WEAVE_BUFFER = 15
+local HS_BEAR_SINGLE_SWIPE_WEAVE_RAGE = HS_BEAR_MAUL_RAGE + HS_BEAR_SWIPE_RAGE + HS_BEAR_MAUL_WEAVE_BUFFER
+local HS_BEAR_AOE_MAUL_WEAVE_RAGE = HS_BEAR_MAUL_RAGE + HS_BEAR_SWIPE_RAGE
+local HS_CAT_AOE_SWIPE_ENERGY = 45
+local HS_CAT_AOE_TF_MAX_CP = 4
 local hsDebuffImmune = { target = "", rip = false, rake = false, ff = false }
 
 local function HSSetNotBehindLockout(source)
@@ -106,6 +115,12 @@ function HolyShift_SlashCommand(msg)
 	local _,_, HScommand,HSoption = string.find(msg, "([%w%p]+)%s*(.*)$")
 	--HSPrint(HScommand)
 	if HScommand == "dps" then
+		HolyShiftAddon()
+	elseif HScommand == "single" then
+		HSMode = "single"
+		HolyShiftAddon()
+	elseif HScommand == "aoe" then
+		HSMode = "aoe"
 		HolyShiftAddon()
 	elseif HScommand == "innervate" then 
 		if HSoption == "on" then
@@ -231,7 +246,8 @@ function HolyShift_SlashCommand(msg)
 	elseif HScommand == nil or HScommand == "" then
 		--HSPrint(HScommand)
 		HSPrint("---------------------")
-		HSPrint('|cffd08524HolyShift: |cffffffffMake a macro that just says |cffecd226/hsdps dps |cffffffffand put on the same key in human and cat form.')
+		HSPrint('|cffd08524HolyShift: |cffffffffCurrent mode = |cffecd226'..tostring(HSMode))
+		HSPrint('|cffd08524HolyShift: |cffffffffUse |cffecd226/hsdps single|cffffffff or |cffecd226/hsdps aoe|cffffffff, then spam your normal |cffecd226/hsdps dps|cffffffff macro.')
 		if HSInnervateUse == 1 then
 			HSPrint('|cffd08524HolyShift: |cffffffffInnervate |cff24D040Enabled|cffd08524.|cffecd226 /hsdps innervate on |cffd08524or|cffecd226 /hsdps innervate off |cffd08524to change')
 		else
@@ -463,6 +479,7 @@ function HolyShift_OnEvent(event)
 		else
 			HSPrint('|cffd08524HolyShift: |cffffffffAuto Faerie Fire |cffD02424Disabled')
 		end
+		HSPrint('|cffd08524HolyShift: |cffffffffRotation mode = |cffecd226'..tostring(HSMode))
 		if HSWeapon == nil then
 			HSPrint('|cffd08524HolyShift: |cffffffffWEAPON SWAP: |cffecd226No weapon assigned for HSWeapon')
 		elseif HSWeapon == 'none' or HSWeapon == 'None' then
@@ -544,6 +561,9 @@ function HolyShift_OnEvent(event)
             else
                 tonumber(HSAutoFF)
             end
+			if HSMode == nil or HSMode == "" then
+                HSMode = "single"
+            end
 			if HSDebugEnabled == nil then
 				HSDebugEnabled = 0
 			else
@@ -560,6 +580,62 @@ function HSPrint(msg)
         return
     end
     DEFAULT_CHAT_FRAME:AddMessage((msg))
+end
+function HSIsAOEMode()
+	return HSMode == "aoe"
+end
+function HSGetCurrentForm()
+    for i=1,GetNumShapeshiftForms(),1 do
+        local _, formName, active = GetShapeshiftFormInfo(i)
+        if active then
+            if formName ~= nil then
+                if string.find(formName, "Dire Bear Form") or string.find(formName, "Bear Form") then
+                    return "bear"
+                elseif string.find(formName, "Cat Form") then
+                    return "cat"
+                elseif string.find(formName, "Travel Form") then
+                    return "travel"
+                elseif string.find(formName, "Aquatic Form") then
+                    return "aquatic"
+                elseif string.find(formName, "Moonkin Form") then
+                    return "moonkin"
+                elseif string.find(formName, "Tree of Life") then
+                    return "tree"
+                end
+            end
+            return "shifted"
+        end
+    end
+    return "caster"
+end
+function HSMaybeGrowl()
+	local targetTarget = UnitName('targettarget')
+	if targetTarget ~= nil and targetTarget ~= playername and not IsSpellOnCD('Growl') then
+		HSDebugTrace("CAST", "Growl")
+		CastSpellByName('Growl')
+		return true
+	end
+	return false
+end
+function HSGetCatBuilder()
+	local ferocity = SpecCheck(2,1)
+	local impshred = SpecCheck(2,9)
+	local idolofferocity = 0
+	local shredCost = 100 - (40 + impshred*6 + 20)
+	local clawCost = 100 - (55 + ferocity + 20)
+	if GetInventoryItemLink('player',18) ~= nil then
+		if(string.find(GetInventoryItemLink('player',18), 'Idol of Ferocity')) then
+			idolofferocity = 3
+			clawCost = 100 - (55 + ferocity + 20 + idolofferocity)
+		end
+	end
+	if HSIsAOEMode() == true and HSHasSpell('Swipe') == true then
+		return "Swipe", "INV_Misc_MonsterClaw_03", HS_CAT_AOE_SWIPE_ENERGY
+	end
+	if BehindTarget() == true and UnitMana('Player') >= HS_SHRED_ENERGY_THRESHOLD then
+		return "Shred", "Spell_Shadow_VampiricAura", shredCost
+	end
+	return "Claw", "Ability_Druid_Rake", clawCost
 end
 function HSGetComboPoints()
 	local cp = GetComboPoints("player","target")
@@ -790,11 +866,15 @@ function HolyShiftAddon()
 	local jgcd,jgeq,jgbag,jgslot = ItemInfo('Jom Gabbar')
 	local flcd,_,flbag,flslot = ItemInfo('Juju Flurry')
 	local lipcd,_,lipbag,lipslot = ItemInfo('Limited Invulnerability Potion')
-	local natshapeshiftr = SpecCheck(1,7)
+	local hsForm = HSGetCurrentForm()
 	if UnitAffectingCombat('player') and HSDeathrate == 1 then
 		DeathRate()
 	end
-	if UnitPowerType("Player") == 3 then
+	if hsForm == "bear" then
+		if HSBearAttack() == true then
+			return
+		end
+	elseif hsForm == "cat" or UnitPowerType("Player") == 3 then
 		if stealthed == true then
 			if HSBuffChk('Ability_Mount_JungleTiger') == false then
 				CastSpellByName("Tiger's Fury(Rank 4)")
@@ -804,7 +884,7 @@ function HolyShiftAddon()
 			end
 		else
 			if tot == playername then
-				if UnitLevel('target') == -1 then --If target is a boss then shift out so you can LIP
+				if UnitLevel('target') == -1 then
 					if lipcd == 0 and lipslot ~= 0 then
 						EShift()
 					elseif(not IsSpellOnCD("Cower")) then
@@ -814,7 +894,7 @@ function HolyShiftAddon()
 					else
 						Atk("Auto",stealthed,romactive,romcooldown)
 					end
-				else --Else if target is not a boss
+				else
 					if partynum > 2 then
 						if(not IsSpellOnCD("Cower")) and HSCowerUse == 1 then
 							CastSpellByName("Cower")
@@ -871,40 +951,38 @@ function Atk(CorS,stealthyn,romyn,romcd)
 	local canFF = not HSIsDebuffImmune("ff")
 	local canRip = not HSIsDebuffImmune("rip")
 	local ferocity = SpecCheck(2,1)
-	local idolofferocity = 0
 	local shth = 15
 	local rakeCost = 40 - ferocity
-	local impshred = SpecCheck(2,9)
-	local shredtext = "Spell_Shadow_VampiricAura"
-	local clawtext = "Ability_Druid_Rake"
-	local shredCost = 100 - (40 + impshred*6 + 20)
-	local clawCost = 100 - (55 + ferocity + 20 + idolofferocity)
-	local builderSpell = "Claw"
-	local builderTexture = clawtext
-	local builderCost = clawCost
-	local builderSlot = 0
+	local fbthresh = 5
+	local aoeMode = HSIsAOEMode()
+	local builderSpell, builderTexture, builderCost = HSGetCatBuilder()
+	local builderSlot = FindActionSlot(builderTexture)
 	local kotscd,kotseq,kotsbag,kotsslot = ItemInfo('Kiss of the Spider')
 	local escd,eseq,esbag,esslot = ItemInfo('Earthstrike')
 	local zhmcd,zhmeq,zhmbag,zhmslot = ItemInfo('Zandalarian Hero Medallion')
-	local fbthresh = 5
-	if(romyn == true) then
-		shth = 30
+
+	if builderSpell == "Shred" and builderSlot == 0 then
+		builderSpell = "Claw"
+		builderTexture = "Ability_Druid_Rake"
+		builderCost = 100 - (55 + ferocity + 20)
+		builderSlot = FindActionSlot(builderTexture)
+		HSDebugTrace("BUILDER_FALLBACK", "Shred slot missing; fallback to Claw")
+	elseif builderSpell == "Swipe" and builderSlot == 0 then
+		builderSpell = "Claw"
+		builderTexture = "Ability_Druid_Rake"
+		builderCost = 100 - (55 + ferocity + 20)
+		builderSlot = FindActionSlot(builderTexture)
+		HSDebugTrace("BUILDER_FALLBACK", "Swipe slot missing; fallback to Claw")
 	end
-	if GetInventoryItemLink('player',18) ~= nil then
-		if(string.find(GetInventoryItemLink('player',18), 'Idol of Ferocity')) then
-			idolofferocity = 3
-			clawCost = 100 - (55 + ferocity + 20 + idolofferocity)
-			builderCost = clawCost
-		end
-	end
+
 	if UnitLevel('target') == -1 then
 		PopSkeleton()
-		if HSMCPUse == 1 then 
-			Pummel() 
+		if HSMCPUse == 1 then
+			Pummel()
 		end
 		if UnitAffectingCombat('Player') and kotseq ~= -1 and kotscd == 0 and UnitName('target') ~= "Razorgore the Untamed" and (CheckInteractDistance('target',3) == 1 or MobTooFar() == true) then
 			UseItemByName("Kiss of the Spider")
-		end 
+		end
 		if UnitAffectingCombat('Player') and eseq ~= -1 and escd == 0 and UnitName('target') ~= "Razorgore the Untamed" and (CheckInteractDistance('target',3) == 1 or MobTooFar() == true) then
 			UseItemByName("Earthstrike")
 		end
@@ -912,41 +990,29 @@ function Atk(CorS,stealthyn,romyn,romcd)
 			UseItemByName("Zandalarian Hero Medallion")
 		end
 	end
-	if BehindTarget() == true and UnitMana('Player') >= HS_SHRED_ENERGY_THRESHOLD then
-		builderSpell = "Shred"
-		builderTexture = shredtext
-		builderCost = shredCost
-	end
-	builderSlot = FindActionSlot(builderTexture)
-	if builderSpell == "Shred" and builderSlot == 0 then
-		builderSpell = "Claw"
-		builderTexture = clawtext
-		builderCost = clawCost
-		builderSlot = FindActionSlot(builderTexture)
-		HSDebugTrace("BUILDER_FALLBACK", "Shred slot missing; fallback to Claw")
-	end
-	HSDebugTrace("ATK_THRESHOLDS", "CorS="..tostring(CorS).." builder="..builderSpell.." bcost="..tostring(builderCost).." fbthresh="..tostring(fbthresh).." shth="..tostring(shth))
+
+	HSDebugTrace("ATK_THRESHOLDS", "mode="..tostring(HSMode).." builder="..builderSpell.." bcost="..tostring(builderCost).." cp="..tostring(comboPoints))
+
 	if UnitIsDead('target') then
 		doclaw = 0
 		HSDebugTrace("TARGET_DEAD", "")
 		return
 	end
 
-	-- Keep Tiger's Fury up when possible, but do not delay high-point finish windows.
 	if HSTigerUse == 1
 	and stealthyn == false
 	and HSBuffChk('Ability_Mount_JungleTiger') == false
 	and (not IsSpellOnCD("Tiger's Fury"))
 	and UnitMana('Player') >= 30
-	and comboPoints < 4
+	and comboPoints < HS_CAT_AOE_TF_MAX_CP
 	and (CheckInteractDistance('target',3) == 1 or MobTooFar() == true) then
 		HSDebugTrace("CAST", "Tiger's Fury")
 		CastSpellByName("Tiger's Fury(Rank 4)")
 		return
 	end
 
-	-- Keep Rake up as a primary rotation priority before builder/finisher casts.
-	if stealthyn == false
+	if aoeMode ~= true
+	and stealthyn == false
 	and CheckInteractDistance('target',3) == 1
 	and comboPoints < fbthresh
 	and canRake
@@ -959,7 +1025,6 @@ function Atk(CorS,stealthyn,romyn,romcd)
 		return
 	end
 
-	-- Apply Faerie Fire promptly while in melee if enabled and missing.
 	if HSAutoFF == 1
 	and stealthyn == false
 	and UnitExists("target")
@@ -982,34 +1047,23 @@ function Atk(CorS,stealthyn,romyn,romcd)
 		and (not IsSpellOnCD("Faerie Fire (Feral)")) then
 			HSDebugTrace("CAST", "Faerie Fire (out of range)")
 			CastSpellByName("Faerie Fire (Feral)(Rank 4)")
+			return
 		end
 	end
-	if(comboPoints<fbthresh) then
-		HSDebugTrace("BUILDER_PHASE", "comboPoints<fbthresh")
-		if UnitMana('Player')>=builderCost or HSBuffChk("Spell_Shadow_ManaBurn") == true then
-			if builderSlot ~= 0 and IsUse(builderSlot) == 1 then
-				if not IsSpellOnCD(builderSpell) then
-					if builderSpell == "Shred" and BehindTarget() ~= true then
-						HSDebugTrace("BUILDER_GUARD", "Shred blocked by behind check; fallback to Claw")
-						builderSpell = "Claw"
-						builderTexture = clawtext
-						builderCost = clawCost
-						builderSlot = FindActionSlot(builderTexture)
-					end
-					if builderSlot == 0 or IsUse(builderSlot) ~= 1 then
-						HSDebugTrace("BUILDER_UNAVAILABLE", builderSpell.." fallback unusable")
-						return
-					end
-					if HSBuffChk("Spell_Shadow_ManaBurn") == true then
-						HSDebugTrace("CAST", builderSpell.." (builder clearcasting)")
-					else
-						HSDebugTrace("CAST", builderSpell.." (builder)")
-					end
-					CastSpellByName(builderSpell)
-					--HSPrint(doclaw)
-				end
-			elseif builderSlot == 0 then
-				HSDebugTrace("BUILDER_UNAVAILABLE", builderSpell.." action slot not found")
+
+	if comboPoints < fbthresh or aoeMode == true then
+		if UnitMana('Player') >= builderCost or HSBuffChk("Spell_Shadow_ManaBurn") == true then
+			if builderSpell == "Shred" and BehindTarget() ~= true then
+				builderSpell = "Claw"
+				builderTexture = "Ability_Druid_Rake"
+				builderCost = 100 - (55 + ferocity + 20)
+				builderSlot = FindActionSlot(builderTexture)
+				HSDebugTrace("BUILDER_GUARD", "Shred blocked; fallback to Claw")
+			end
+			if builderSlot ~= 0 and IsUse(builderSlot) == 1 and not IsSpellOnCD(builderSpell) then
+				HSDebugTrace("CAST", builderSpell.." (builder)")
+				CastSpellByName(builderSpell)
+				return
 			end
 		else
 			HSDebugTrace("LOW_ENERGY", "builder mana low; attempting FF/shift")
@@ -1022,50 +1076,43 @@ function Atk(CorS,stealthyn,romyn,romcd)
 				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 and canFF then
 					HSDebugTrace("CAST", "Faerie Fire (energy gap)")
 					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
+					return
 				end
+			end
+		end
+		return
+	end
+
+	local finisherEnergy = shth
+	local shouldRip = comboPoints == 5 and HasRip() == false and canRip
+	if shouldRip then
+		finisherEnergy = 30
+	end
+	if UnitMana('Player') >= finisherEnergy or HSBuffChk("Spell_Shadow_ManaBurn") == true then
+		if shouldRip then
+			if not IsSpellOnCD("Rip") then
+				HSDebugTrace("CAST", "Rip")
+				CastSpellByName("Rip")
+				return
+			end
+		else
+			if IsUse(FindActionSlot("Ability_Druid_FerociousBite")) == 1 and not IsSpellOnCD("Ferocious Bite") then
+				HSDebugTrace("CAST", "Ferocious Bite")
+				CastSpellByName("Ferocious Bite")
+				return
 			end
 		end
 	else
-		HSDebugTrace("FINISHER_PHASE", "comboPoints>=fbthresh")
-		local finisherEnergy = shth
-		local shouldRip = comboPoints == 5 and HasRip() == false and canRip
-		if shouldRip then
-			finisherEnergy = 30
-		end
-		if UnitMana('Player')>=finisherEnergy or HSBuffChk("Spell_Shadow_ManaBurn") == true then
-			if shouldRip then
-				if not IsSpellOnCD("Rip") then
-					if HSBuffChk("Spell_Shadow_ManaBurn") == true then
-						HSDebugTrace("CAST", "Rip (opener @5cp clearcasting)")
-					else
-						HSDebugTrace("CAST", "Rip (opener @5cp)")
-					end
-					CastSpellByName("Rip")
-				end
-			else
-				if IsUse(FindActionSlot("Ability_Druid_FerociousBite")) == 1 then
-					if not IsSpellOnCD("Ferocious Bite") then
-						if HSBuffChk("Spell_Shadow_ManaBurn") == true then
-							HSDebugTrace("CAST", "Ferocious Bite (clearcasting)")
-						else
-							HSDebugTrace("CAST", "Ferocious Bite")
-						end
-						CastSpellByName("Ferocious Bite")
-					end
+		if UnitAffectingCombat('Player') and UnitExists("target") then
+			if CanShift() == true then
+				if HSTryShift("finisher low energy") == true then
+					return
 				end
 			end
-		else
-			HSDebugTrace("LOW_ENERGY", "finisher mana low; attempting FF/shift")
-			if UnitAffectingCombat('Player') and UnitExists("target") then
-				if CanShift() == true then
-					if HSTryShift("finisher low energy") == true then
-						return
-					end
-				end
-				if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 and canFF then
-					HSDebugTrace("CAST", "Faerie Fire (finisher energy gap)")
-					CastSpellByName("Faerie Fire (Feral)(Rank 4)")
-				end
+			if comboPoints <= HS_FF_REFRESH_MAX_CP and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and stealthyn == false and (not IsSpellOnCD("Faerie Fire (Feral)")) and HSAutoFF == 1 and canFF then
+				HSDebugTrace("CAST", "Faerie Fire (finisher energy gap)")
+				CastSpellByName("Faerie Fire (Feral)(Rank 4)")
+				return
 			end
 		end
 	end
@@ -1252,6 +1299,139 @@ function GetActiveForm()
         end
     end
     return formId, catId
+end
+function HSGetMaulActionSlot()
+	return FindActionSlot('Ability_Druid_Maul')
+end
+function HSGetSwipeActionSlot()
+	return FindActionSlot('INV_Misc_MonsterClaw_03')
+end
+function HSIsMaulQueued()
+	local maulSlot = HSGetMaulActionSlot()
+	if maulSlot == 0 then
+		return false
+	end
+	return IsCurrentAction(maulSlot) == 1
+end
+function HSCanQueueMaul()
+	local maulSlot = HSGetMaulActionSlot()
+	if maulSlot == 0 then
+		return false
+	end
+	if IsUse(maulSlot) ~= 1 then
+		return false
+	end
+	if IsSpellOnCD('Maul') then
+		return false
+	end
+	return true
+end
+function HSQueueMaul(reason)
+	if HSIsMaulQueued() == true then
+		return false
+	end
+	if HSCanQueueMaul() ~= true then
+		return false
+	end
+	HSDebugTrace("CAST", "Maul queue "..tostring(reason or ""))
+	CastSpellByName('Maul')
+	return true
+end
+function HSUnqueueMaul(reason)
+	if HSIsMaulQueued() ~= true then
+		return false
+	end
+	HSDebugTrace("CAST", "Maul unqueue "..tostring(reason or ""))
+	CastSpellByName('Maul')
+	return true
+end
+function HSTryBearSwipe(reason)
+	local swipeSlot = HSGetSwipeActionSlot()
+	if swipeSlot == 0 then
+		return false
+	end
+	if HSHasSpell('Swipe') ~= true then
+		return false
+	end
+	if IsUse(swipeSlot) ~= 1 then
+		return false
+	end
+	if IsSpellOnCD('Swipe') then
+		return false
+	end
+	HSDebugTrace("CAST", "Swipe "..tostring(reason or ""))
+	CastSpellByName('Swipe')
+	return true
+end
+function HSBearAttack()
+	if HSGetCurrentForm() ~= "bear" then
+		return false
+	end
+	if UnitExists('target') ~= 1 or UnitIsDead('target') then
+		return false
+	end
+	StAttack(1)
+	local rage = UnitMana('player')
+	local inMelee = (CheckInteractDistance('target',3) == 1 or MobTooFar() == true)
+	local canFF = not HSIsDebuffImmune("ff")
+	local aoeMode = HSIsAOEMode()
+
+	if HSMaybeGrowl() == true then
+		return true
+	end
+	if HSAutoFF == 1 and canFF and IsTDebuff('target', 'Spell_Nature_FaerieFire') == false and not IsSpellOnCD('Faerie Fire (Feral)') then
+		HSDebugTrace("CAST", "Faerie Fire (Feral) bear")
+		CastSpellByName('Faerie Fire (Feral)(Rank 4)')
+		return true
+	end
+	if inMelee and rage >= HS_BEAR_DEMO_RAGE and HSHasSpell('Demoralizing Roar') and IsTDebuff('target', 'Ability_Druid_DemoralizingRoar') == false and not IsSpellOnCD('Demoralizing Roar') then
+		HSDebugTrace("CAST", "Demoralizing Roar")
+		CastSpellByName('Demoralizing Roar')
+		return true
+	end
+	if inMelee ~= true then
+		if HSIsMaulQueued() == true then
+			HSUnqueueMaul('left melee range')
+			return true
+		end
+		HSDebugTrace("BEAR_IDLE", "out of melee mode="..tostring(HSMode).." rage="..tostring(rage))
+		return false
+	end
+
+	if aoeMode == true then
+		if rage >= HS_BEAR_AOE_MAUL_WEAVE_RAGE then
+			HSQueueMaul('bear aoe weave')
+		elseif HSIsMaulQueued() == true and rage < HS_BEAR_SWIPE_RAGE then
+			HSUnqueueMaul('bear aoe preserve swipe')
+		end
+		if rage >= HS_BEAR_SWIPE_RAGE then
+			if HSTryBearSwipe('bear aoe') == true then
+				return true
+			end
+		end
+		if rage >= HS_BEAR_MAUL_RAGE then
+			if HSQueueMaul('bear aoe fallback') == true then
+				return true
+			end
+		end
+	else
+		if rage >= HS_BEAR_MAUL_RAGE then
+			if HSQueueMaul('bear single') == true then
+				return true
+			end
+		end
+		if rage >= HS_BEAR_SINGLE_SWIPE_WEAVE_RAGE and HSIsMaulQueued() == true then
+			if HSTryBearSwipe('bear single weave') == true then
+				return true
+			end
+		end
+		if HSIsMaulQueued() == true and rage < HS_BEAR_MAUL_RAGE then
+			HSUnqueueMaul('bear single low rage')
+			return true
+		end
+	end
+	HSDebugTrace("BEAR_IDLE", "mode="..tostring(HSMode).." rage="..tostring(rage).." maulQueued="..tostring(HSIsMaulQueued()))
+	return false
 end
 function FindAttackActionSlot()
     for i = 1, 120, 1
