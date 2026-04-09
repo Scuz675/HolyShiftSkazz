@@ -2,7 +2,7 @@
 
 HolyShift is a Turtle WoW druid automation addon supporting Cat, Bear, and Balance (Moonkin) forms with single-target and AOE modes.
 
-Maintainer: Miioon
+Maintainer: Skazz/Miioon
 Original author: Maulbatross (Kronos 3)
 
 ## Controls
